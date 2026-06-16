@@ -7837,7 +7837,7 @@ function _liveMusicSetStatus(txt) {
 // 登录 / 注册 模块（内存版，兼容 artifact 沙盒）
 // ══════════════════════════════════════════
 
-// ── 内存用户库 ──
+// ── 内存用户库（首次加载前的占位，会被 loadUsersFromDB 覆盖）──
 window._AUTH_USERS = [
   { username: '超级管理员', phone: '18888888888', password: 'Admin123', role: 'Admin' },
   { username: 'admin',     phone: '13900000000', password: 'Admin123', role: 'Admin' },
@@ -7850,6 +7850,32 @@ function authSaveUsers(arr)   { window._AUTH_USERS = arr; }
 function authGetSession()     { return window._AUTH_SESSION || null; }
 function authSetSession(user) { window._AUTH_SESSION = { username: user.username, phone: user.phone, role: user.role || '普通用户' }; }
 function authClearSession()   { window._AUTH_SESSION = null; }
+
+// ── 启动时从 Supabase 加载真实用户列表，覆盖上面的占位数据 ──
+async function loadUsersFromDB() {
+  try {
+    const rows = await SB.select('app_users', '?order=id.asc');
+    if (rows && rows.length > 0) {
+      window._AUTH_USERS = rows.map(r => ({ username: r.username, phone: r.phone, password: r.password, role: r.role }));
+    }
+  } catch (e) {
+    console.error('[Supabase] 加载用户列表失败，使用内置默认账号:', e);
+  }
+}
+document.addEventListener('DOMContentLoaded', loadUsersFromDB);
+
+// 注册新用户写入 Supabase；返回 true=成功，false=失败（已通过 showNotif/authShowError 提示原因）
+async function authInsertUser(user) {
+  try {
+    await SB.insert('app_users', [{
+      username: user.username, phone: user.phone, password: user.password, role: user.role || '普通用户',
+    }]);
+    return true;
+  } catch (e) {
+    console.error('[Supabase] 注册写入失败:', e);
+    return false;
+  }
+}
 
 // ── 初始化（粒子动画）──
 (function authInit() {
@@ -7998,13 +8024,20 @@ function doRegister() {
   if (users.find(u => u.phone === phone))    return authShowError('reg', '手机号已注册');
   const btn = document.getElementById('reg-btn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="auth-loading"></span>注册中…'; }
-  setTimeout(() => {
-    users.push({ username: name, phone, password: pass, role: '普通用户' });
+  (async () => {
+    const newUser = { username: name, phone, password: pass, role: '普通用户' };
+    const ok = await authInsertUser(newUser);
+    if (!ok) {
+      authShowError('reg', '注册失败，请稍后重试（数据库连接异常）');
+      if (btn) { btn.disabled = false; btn.textContent = '注 册'; }
+      return;
+    }
+    users.push(newUser);
     authSaveUsers(users);
     authShowSuccess('reg', '注册成功！');
     if (btn) { btn.disabled = false; btn.textContent = '注 册'; }
     setTimeout(() => { authSwitchTab('login'); const lu = document.getElementById('login-user'); if(lu) lu.value = name; }, 1200);
-  }, 600);
+  })();
 }
 
 // ── 退出登录 ──
