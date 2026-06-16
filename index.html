@@ -3198,12 +3198,25 @@ const SB = {
 };
 
 async function saveMediaAsset(item, type) {
+  if (!item.url) {
+    console.warn('[Supabase] 跳过保存：媒体URL为空（生成可能未完全成功）', item);
+    return;
+  }
   try {
     await SB.insert('media_assets', [{
       id: item.id, type, name: item.name, emoji: item.emoji, bg: item.bg,
       duration: item.duration, size: item.size, url: item.url, prompt: item.prompt || null,
     }]);
-  } catch (e) { console.error('[Supabase] 保存媒体记录失败:', e); }
+  } catch (e) {
+    const msg = e.message || '';
+    const isDuplicate = msg.includes('23505') || msg.includes('duplicate') || msg.includes('already exists');
+    if (isDuplicate) {
+      console.log('[Supabase] 该媒体URL已存在，跳过重复写入:', item.url);
+      return;
+    }
+    console.error('[Supabase] 保存媒体记录失败:', e);
+    if (typeof showNotif === 'function') showNotif('⚠ 数据库保存失败：' + e.message);
+  }
 }
 
 async function syncLiveAccount(a) {
@@ -4645,6 +4658,12 @@ async function startConvert() {
     if (results && results.length > 0) {
       resultVideoUrl = results[0].url;
       window._convertResultVideoUrl = resultVideoUrl;
+      // ★ 生成成功立即同步到媒体库/数据库，不再依赖用户后续手动点"发送到直播间"
+      if (typeof lmSyncNewMedia === 'function') {
+        const _dh = window._convertSelectedDH || { name:'换脸视频', emoji:'🎞', bg:'linear-gradient(135deg,#1d4ed8,#1e40af)' };
+        const _title = (_dh.name || '换脸视频') + '_' + new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+        lmSyncNewMedia(_title, _dh.emoji || '🎞', _dh.bg || 'linear-gradient(135deg,#1d4ed8,#1e40af)', '图生视频', '00:30', '60MB', resultVideoUrl);
+      }
     } else {
       throw new Error('API 未返回视频，请稍后重试');
     }
@@ -5716,8 +5735,8 @@ async function i2vStartGen() {
   grid.insertBefore(card, grid.firstChild);
 
   // 同步到直播间管理媒体库
-  if (typeof lmSyncNewMedia === 'function') {
-    lmSyncNewMedia(label, emoji || '📦', bg || 'linear-gradient(135deg,#312e81,#4c1d95)', '图生视频', dur, '60MB', window._lastI2vVideoUrl||'');
+  if (typeof lmSyncNewMedia === 'function' && videoUrl) {
+    lmSyncNewMedia(label, emoji || '📦', bg || 'linear-gradient(135deg,#312e81,#4c1d95)', '图生视频', dur, '60MB', videoUrl);
   }
 
   // 视频生成成功后显示内嵌播放器并准备TTS
@@ -7026,7 +7045,7 @@ function t2iLibPush(url, prompt, tag) {
   // 同步到直播间管理媒体库
   if (typeof lmSyncNewMedia === 'function') {
     const shortName = (prompt || '文生图').substring(0, 16);
-    lmSyncNewMedia(shortName, '🖼', 'linear-gradient(135deg,#312e81,#7c3aed)', '文生图', '图片', '4MB');
+    lmSyncNewMedia(shortName, '🖼', 'linear-gradient(135deg,#312e81,#7c3aed)', '文生图', '图片', '4MB', url);
   }
   // 同步所有图库 UI
   _renderI2vT2iGallery();
@@ -9545,6 +9564,39 @@ function applyNewKey() {
   showNotif('✓ API Key 已更新，正在重新检测...');
   setTimeout(frwDiag, 300);
 }
+
+// ══════════════════════════════════════════════════
+//  Supabase 写入诊断：在浏览器控制台运行 sbDiag() 即可
+//  会插入一条测试记录到 media_assets，并打印真实报错
+// ══════════════════════════════════════════════════
+async function sbDiag() {
+  const testItem = {
+    id: 'diag_' + Date.now(),
+    name: '诊断测试',
+    emoji: '🔧',
+    bg: '',
+    duration: '00:01',
+    size: '1KB',
+    url: 'https://example.com/diag-test.mp4',
+    prompt: null,
+  };
+  console.log('[sbDiag] 准备写入测试记录:', testItem);
+  try {
+    const res = await SB.insert('media_assets', [{
+      id: testItem.id, type: 't2v', name: testItem.name, emoji: testItem.emoji,
+      bg: testItem.bg, duration: testItem.duration, size: testItem.size,
+      url: testItem.url, prompt: testItem.prompt,
+    }]);
+    console.log('[sbDiag] ✓ 写入成功，返回:', res);
+    showNotif('✓ 诊断写入成功，可在 Supabase media_assets 表看到 id=' + testItem.id);
+    return res;
+  } catch (e) {
+    console.error('[sbDiag] ✗ 写入失败，真实报错:', e.message);
+    showNotif('✗ 诊断写入失败：' + e.message);
+    throw e;
+  }
+}
+
 
 
 </script>
