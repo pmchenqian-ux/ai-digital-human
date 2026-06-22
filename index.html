@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>数字人直播平台</title>
+<!-- SheetJS：仅用于解析用户上传的 .xlsx/.xls 问答库文件，CSV/纯文本上传不依赖此库 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1647,13 +1649,20 @@
         <div class="section-title" style="margin-bottom:14px">◉ 智能交互配置</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
           <div class="panel">
-            <div style="font-size:12px;font-weight:600;margin-bottom:12px;color:#ffffff">自定义问答库</div>
-            <div style="display:flex;flex-direction:column;gap:6px" id="faq-list">
-              <div style="padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)"><div style="font-size:11px;color:#a5b4fc;margin-bottom:3px">Q: 这款产品多少钱？</div><div style="font-size:11px;color:var(--muted)">A: 直播间专属价只要99元，全网最低价～</div></div>
-              <div style="padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)"><div style="font-size:11px;color:#a5b4fc;margin-bottom:3px">Q: 能退换货吗？</div><div style="font-size:11px;color:var(--muted)">A: 支持7天无理由退换，品质有保障！</div></div>
-              <div style="padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)"><div style="font-size:11px;color:#a5b4fc;margin-bottom:3px">Q: 适合什么肤质？</div><div style="font-size:11px;color:var(--muted)">A: 所有肤质都适合，特别是干皮和混合肤质！</div></div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div style="font-size:12px;font-weight:600;color:#ffffff">自定义问答库</div>
+              <div style="display:flex;gap:6px">
+                <input type="file" id="qa-upload-input" accept=".csv,.txt,.xlsx,.xls" style="display:none" onchange="handleQaUpload(event)">
+                <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:3px 8px" onclick="document.getElementById('qa-upload-input').click()">📤 上传知识库</button>
+              </div>
             </div>
-            <button class="btn btn-ghost btn-sm" style="margin-top:10px;width:100%" onclick="addFAQ()">+ 添加问答</button>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:8px">支持 CSV/Excel（两列：问题、回答）或纯文本（每行 Q: ... / A: ...）</div>
+            <div style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto" id="faq-list"></div>
+            <div style="display:flex;gap:6px;margin-top:10px">
+              <input id="qa-new-q" placeholder="新问题/关键词" style="flex:1;font-size:11px;padding:6px 8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:#fff">
+              <input id="qa-new-a" placeholder="对应回答" style="flex:1.4;font-size:11px;padding:6px 8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:#fff">
+              <button class="btn btn-ghost btn-sm" onclick="addFAQ()">+ 添加</button>
+            </div>
           </div>
           <div class="panel">
             <div style="font-size:12px;font-weight:600;margin-bottom:12px;color:#ffffff">主动互动设置</div>
@@ -3330,11 +3339,49 @@ function selectConvertDH(el, name, emoji, bg){
 }
 function toggleSwitch(el){el.classList.toggle('on');}
 
-const aiReplies={价格:'直播间今天有特别优惠，购满199减30，点击下方小黄车即可下单～',优惠:'直播间专属价，全场8折起，仅今天有效哦，快点抢购！',颜色:'我们这款共有5个色号，分别是裸粉、豆沙、玫瑰红、橘调和正红，每个都超级好看！',发货:'下单后48小时内发货，支持全国包邮，顺丰快递哦～',质量:'品质绝对有保证！我们是官方正品，支持验货，假货退款双倍赔偿！',购买:'点击直播间下方的小黄车，选好款式直接拍就可以了，非常方便！',退换:'支持7天无理由退换货，有任何质量问题联系客服即可，放心购买！',default:'感谢您的关注！有任何问题都可以在评论区提问，我会一一解答的～'};
-function getAIReply(msg){for(const[k,v]of Object.entries(aiReplies)){if(msg.includes(k))return v;}return aiReplies.default;}
+// ══════════════════════════════════════════════════
+//  智能问答知识库（原来是硬编码 aiReplies 对象，
+//  现在改为可上传、存数据库的数组，结构: {question, answer}
+// ══════════════════════════════════════════════════
+let qaKnowledge = [
+  {question:'价格', answer:'直播间今天有特别优惠，购满199减30，点击下方小黄车即可下单～'},
+  {question:'优惠', answer:'直播间专属价，全场8折起，仅今天有效哦，快点抢购！'},
+  {question:'颜色', answer:'我们这款共有5个色号，分别是裸粉、豆沙、玫瑰红、橘调和正红，每个都超级好看！'},
+  {question:'发货', answer:'下单后48小时内发货，支持全国包邮，顺丰快递哦～'},
+  {question:'质量', answer:'品质绝对有保证！我们是官方正品，支持验货，假货退款双倍赔偿！'},
+  {question:'购买', answer:'点击直播间下方的小黄车，选好款式直接拍就可以了，非常方便！'},
+  {question:'退换', answer:'支持7天无理由退换货，有任何质量问题联系客服即可，放心购买！'},
+];
+const qaDefaultReply = '感谢您的关注！有任何问题都可以在评论区提问，我会一一解答的～';
+
+// 关键词包含匹配：按数组顺序找第一条命中的（跟原来逻辑一致）
+function getAIReply(msg){
+  for (const item of qaKnowledge) {
+    if (item.question && msg.includes(item.question)) return item.answer;
+  }
+  return qaDefaultReply;
+}
+
+// 启动时从 Supabase 加载知识库，覆盖上面的内置默认值
+async function loadQaKnowledgeFromDB() {
+  try {
+    const rows = await SB.select('qa_knowledge', '?order=id.asc');
+    if (rows && rows.length > 0) {
+      qaKnowledge = rows.map(r => ({ id: r.id, question: r.question, answer: r.answer }));
+    }
+  } catch (e) {
+    console.error('[Supabase] 加载问答知识库失败，使用内置默认值:', e);
+  } finally {
+    if (typeof renderFAQList === 'function') renderFAQList();
+  }
+}
+document.addEventListener('DOMContentLoaded', loadQaKnowledgeFromDB);
+
 function speakText(text) {
   _ttsSpeak(text, 'female1', '1');
 }
+
+
 
 function sendChat(){
   const input=document.getElementById('chat-input');
@@ -4847,11 +4894,164 @@ function clmPickMode(el){
   const t=el.querySelector('div:nth-child(2)');if(t)t.style.color='#a5b4fc';
 }
 
-function addFAQ(){
-  const list=document.getElementById('faq-list');const item=document.createElement('div');
-  item.style='padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--accent)';
-  item.innerHTML='<div style="font-size:11px;color:#a5b4fc;margin-bottom:3px">Q: 新问题（点击编辑）</div><div style="font-size:11px;color:var(--muted)">A: 输入回答内容...</div>';
-  list.appendChild(item);showNotif('已添加新问答条目');
+// ══════════════════════════════════════════════════
+//  知识库 UI：渲染 / 添加 / 删除 / 文件上传解析
+// ══════════════════════════════════════════════════
+function renderFAQList(){
+  const list = document.getElementById('faq-list');
+  if (!list) return;
+  if (qaKnowledge.length === 0) {
+    list.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:8px 0;text-align:center">暂无问答，点击下方“上传知识库”或手动添加</div>';
+    return;
+  }
+  list.innerHTML = qaKnowledge.map((item, idx) => `
+    <div style="padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border);position:relative">
+      <div style="font-size:11px;color:#a5b4fc;margin-bottom:3px;padding-right:18px">Q: ${escapeHtml(item.question)}</div>
+      <div style="font-size:11px;color:var(--muted);padding-right:18px">A: ${escapeHtml(item.answer)}</div>
+      <button onclick="deleteFAQ(${idx})" title="删除" style="position:absolute;top:6px;right:6px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;line-height:1">✕</button>
+    </div>`).join('');
+}
+function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// 手动添加一条问答，写入数据库后刷新列表
+async function addFAQ(){
+  const qInput = document.getElementById('qa-new-q');
+  const aInput = document.getElementById('qa-new-a');
+  const q = qInput?.value.trim() || '';
+  const a = aInput?.value.trim() || '';
+  if (!q || !a) { showNotif('⚠ 请填写问题和回答'); return; }
+  qaKnowledge.push({ question: q, answer: a });
+  renderFAQList();
+  if (qInput) qInput.value = '';
+  if (aInput) aInput.value = '';
+  showNotif('已添加新问答条目');
+  try {
+    await SB.insert('qa_knowledge', [{ question: q, answer: a, source: 'manual' }]);
+  } catch (e) {
+    console.error('[Supabase] 保存问答失败:', e);
+    showNotif('⚠ 已添加到本地，但同步数据库失败：' + e.message);
+  }
+}
+
+// 删除一条问答（同时从数据库删除，按 question+answer 匹配，因为前端数组不一定有 id）
+async function deleteFAQ(idx){
+  const item = qaKnowledge[idx];
+  if (!item) return;
+  qaKnowledge.splice(idx, 1);
+  renderFAQList();
+  try {
+    if (item.id) {
+      await SB.remove('qa_knowledge', `?id=eq.${item.id}`);
+    } else {
+      await SB.remove('qa_knowledge', `?question=eq.${encodeURIComponent(item.question)}&answer=eq.${encodeURIComponent(item.answer)}`);
+    }
+  } catch (e) {
+    console.error('[Supabase] 删除问答失败:', e);
+    showNotif('⚠ 已从本地移除，但数据库同步失败：' + e.message);
+  }
+}
+
+// 上传文件入口：根据扩展名分流到 CSV/文本解析 或 Excel 解析
+function handleQaUpload(evt){
+  const file = evt.target.files && evt.target.files[0];
+  if (!file) return;
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+    parseQaExcel(file);
+  } else {
+    parseQaTextFile(file);
+  }
+  evt.target.value = ''; // 允许重复选择同一文件
+}
+
+// 解析 CSV / 纯文本：
+// - CSV：每行按逗号分两列，第一列是问题，第二列是回答（自动跳过表头行，如检测到"问题,回答"或"Q,A"）
+// - 纯文本：每行 "Q: xxx" 后紧跟一行 "A: xxx"，或者 "问:xxx" / "答:xxx"
+function parseQaTextFile(file){
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const text = e.target.result;
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+    let pairs = [];
+    const isCsv = file.name.toLowerCase().endsWith('.csv') || lines.some(l => l.includes(','));
+    if (isCsv) {
+      let pendingQ = null;
+      for (const line of lines) {
+        const cols = splitCsvLine(line);
+        if (cols.length >= 2) {
+          const q = cols[0].trim(), a = cols[1].trim();
+          if (/^(问题|q|question)$/i.test(q) && /^(回答|a|answer)$/i.test(a)) continue; // 跳过表头
+          if (q && a) pairs.push({ question: q, answer: a });
+        }
+      }
+    } else {
+      let pendingQ = null;
+      for (const line of lines) {
+        const qMatch = line.match(/^(?:Q|问)[:：]\s*(.+)$/i);
+        const aMatch = line.match(/^(?:A|答)[:：]\s*(.+)$/i);
+        if (qMatch) pendingQ = qMatch[1].trim();
+        else if (aMatch && pendingQ) { pairs.push({ question: pendingQ, answer: aMatch[1].trim() }); pendingQ = null; }
+      }
+    }
+    await importQaPairs(pairs, file.name);
+  };
+  reader.onerror = () => showNotif('⚠ 文件读取失败');
+  reader.readAsText(file, 'UTF-8');
+}
+
+// 简单 CSV 单行拆分（支持双引号包裹的字段，不依赖额外库）
+function splitCsvLine(line){
+  const out = []; let cur = ''; let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { inQuotes = !inQuotes; }
+    else if (c === ',' && !inQuotes) { out.push(cur); cur = ''; }
+    else { cur += c; }
+  }
+  out.push(cur);
+  return out;
+}
+
+// 解析 Excel：用 SheetJS 读取第一个工作表，前两列视为 问题/回答，自动跳过表头
+function parseQaExcel(file){
+  if (typeof XLSX === 'undefined') { showNotif('⚠ Excel 解析库加载失败，请检查网络后重试，或改用 CSV/文本格式上传'); return; }
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+      const pairs = [];
+      for (const row of rows) {
+        const q = (row[0] ?? '').toString().trim();
+        const a = (row[1] ?? '').toString().trim();
+        if (!q || !a) continue;
+        if (/^(问题|q|question)$/i.test(q) && /^(回答|a|answer)$/i.test(a)) continue; // 跳过表头
+        pairs.push({ question: q, answer: a });
+      }
+      await importQaPairs(pairs, file.name);
+    } catch (err) {
+      console.error('[QA] Excel 解析失败:', err);
+      showNotif('⚠ Excel 解析失败：' + err.message);
+    }
+  };
+  reader.onerror = () => showNotif('⚠ 文件读取失败');
+  reader.readAsArrayBuffer(file);
+}
+
+// 把解析出来的问答对批量写入数据库 + 本地列表
+async function importQaPairs(pairs, fileName){
+  if (!pairs || pairs.length === 0) { showNotif('⚠ 未识别到有效问答内容，请检查文件格式'); return; }
+  qaKnowledge.push(...pairs);
+  renderFAQList();
+  showNotif(`✓ 已导入 ${pairs.length} 条问答（来自 ${fileName}）`);
+  try {
+    await SB.insert('qa_knowledge', pairs.map(p => ({ question: p.question, answer: p.answer, source: 'upload', file_name: fileName })));
+  } catch (e) {
+    console.error('[Supabase] 批量导入问答失败:', e);
+    showNotif('⚠ 已导入到本地，但同步数据库失败：' + e.message);
+  }
 }
 
 // ===== 文生图模块逻辑 =====
